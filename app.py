@@ -114,6 +114,12 @@ with st.sidebar:
         options=["도움순(REVIEW_RANKING)", "최신순(RECENT)", "낮은평점순(LOW_SCORE)"],
         key="sort_multi",
     )
+    SORT_MAP = {
+        "도움순(REVIEW_RANKING)": "REVIEW_RANKING",
+        "최신순(RECENT)":         "RECENT",
+        "낮은평점순(LOW_SCORE)":  "LOW_SCORE",
+    }
+    selected_sorts = [SORT_MAP[s] for s in st.session_state.sort_multi] if st.session_state.sort_multi else ["REVIEW_RANKING"]
     delay_base = st.slider("요청 딜레이 (초)", 1.0, 5.0, 0.5,
         key="delay_base",
         help="1.5초 이상 권장 — 낮을수록 빠르지만 차단 위험 증가")
