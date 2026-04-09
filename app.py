@@ -73,6 +73,16 @@ if "result" not in st.session_state:
     st.session_state.result = None
 if "log_lines" not in st.session_state:
     st.session_state.log_lines = []
+if "product_url" not in st.session_state:
+    st.session_state.product_url = ""
+if "max_reviews" not in st.session_state:
+    st.session_state.max_reviews = 300
+if "sort_multi" not in st.session_state:
+    st.session_state.sort_multi = ["도움순(REVIEW_RANKING)", "최신순(RECENT)", "낮은평점순(LOW_SCORE)"]
+if "delay_base" not in st.session_state:
+    st.session_state.delay_base = 1.5
+if "cookie" not in st.session_state:
+    st.session_state.cookie = ""
 
 # ──────────────────────────────────────────────────────────
 # 헤더
@@ -93,27 +103,24 @@ with st.sidebar:
     product_url = st.text_input(
         "스마트스토어 상품 URL *",
         placeholder="https://smartstore.naver.com/가게명/products/숫자ID",
+        key="product_url",
     )
     max_reviews = st.number_input(
-        "최대 수집 리뷰 수", min_value=20, max_value=2000, value=300, step=20,
+        "최대 수집 리뷰 수", min_value=20, max_value=2000, step=20,
+        key="max_reviews",
     )
     sort_multi = st.multiselect(
         "수집 정렬 기준",
         options=["도움순(REVIEW_RANKING)", "최신순(RECENT)", "낮은평점순(LOW_SCORE)"],
-        default=["도움순(REVIEW_RANKING)", "최신순(RECENT)", "낮은평점순(LOW_SCORE)"],
+        key="sort_multi",
     )
-    SORT_MAP = {
-        "도움순(REVIEW_RANKING)": "REVIEW_RANKING",
-        "최신순(RECENT)":         "RECENT",
-        "낮은평점순(LOW_SCORE)":  "LOW_SCORE",
-    }
-    selected_sorts = [SORT_MAP[s] for s in sort_multi] if sort_multi else ["REVIEW_RANKING"]
-
-    delay_base = st.slider("요청 딜레이 (초)", 1.0, 5.0, 1.5, 0.5,
+    delay_base = st.slider("요청 딜레이 (초)", 1.0, 5.0, 0.5,
+        key="delay_base",
         help="1.5초 이상 권장 — 낮을수록 빠르지만 차단 위험 증가")
-
-    cookie = st.text_area("네이버 쿠키 (선택)", placeholder="NID_AUT=...; NID_SES=...;", height=80)
-
+    cookie = st.text_area(
+        "네이버 쿠키 (선택)", placeholder="NID_AUT=...; NID_SES=...;",
+        height=80, key="cookie",
+    )
     st.markdown("---")
     run_btn   = st.button("▶ 분析 시작", type="primary", use_container_width=True)
     clear_btn = st.button("🗑 결과 초기화", use_container_width=True)
@@ -127,8 +134,13 @@ with st.sidebar:
 
 # 초기화 버튼
 if clear_btn:
-    st.session_state.result    = None
-    st.session_state.log_lines = []
+    for k, v in {
+        "result": None, "log_lines": [],
+        "product_url": "", "max_reviews": 300,
+        "sort_multi": ["도움순(REVIEW_RANKING)", "최신순(RECENT)", "낮은평점순(LOW_SCORE)"],
+        "delay_base": 1.5, "cookie": "",
+    }.items():
+        st.session_state[k] = v
     st.rerun()
 
 
@@ -399,6 +411,9 @@ if run_btn:
     prog_bar.empty()
     status_txt.empty()
     render_results(st.session_state.result)
+    if st.session_state.log_lines:
+        with st.expander("📋 수집 로그", expanded=False):
+            st.code("\n".join(st.session_state.log_lines[-50:]), language=None)
     st.stop()   # 아래 중복 렌더 방지
 
 
@@ -407,6 +422,9 @@ if run_btn:
 # ──────────────────────────────────────────────────────────
 if st.session_state.result is not None:
     render_results(st.session_state.result)
+    if st.session_state.log_lines:
+        with st.expander("📋 수집 로그", expanded=False):
+            st.code("\n".join(st.session_state.log_lines[-50:]), language=None)
 else:
     st.markdown("""
     ### 사용 방법
