@@ -265,10 +265,11 @@ if run_btn:
             progress_cb=progress_cb,
         )
         st.session_state.result = result
-        save_cache(result)          # ★ 파일 저장 — UI 재실행돼도 복원
+        save_cache(result)          # ★ 파일 저장 — 앱 재시작돼도 복원
         prog_bar.empty()
         status_txt.empty()
-        st.rerun()                  # 깔끔하게 재실행 → 아래 render_results 진입
+        log_box.__exit__(None,None,None)  # expander 닫기
+        render_results(result)      # ★ rerun 없이 즉시 렌더
 
     except CrawlError as e:
         prog_bar.empty(); status_txt.empty()
