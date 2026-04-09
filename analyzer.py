@@ -12,7 +12,6 @@ import re
 import time
 import random
 import requests
-from bs4 import BeautifulSoup
 from collections import Counter, defaultdict
 from datetime import datetime
 import pandas as pd
@@ -109,53 +108,51 @@ class NaverReviewAnalyzer:
         return score
 
     # ─── 1) 상품 정보 ──────────────────────────
+    @staticmethod
+    def _extract_store_id(url: str) -> str:
+        m = re.search(r'smartstore\.naver\.com/([^/?#]+)', url)
+        return m.group(1) if m else '알 수 없음'
+
     def crawl_product_detail(self) -> dict:
         """
-        실패 시 샘플로 대체하지 않고 CrawlError를 올린다.
-        상품명/가격 없이 리뷰만 분석하는 옵션을 원하면
-        호출자가 try-except로 처리할 것.
+        ★ HTML 페이지 요청 완전 제거 (429 차단 원인)
+        URL에서 store_id/product_id 직접 파싱.
+        상품명은 리뷰 API 첫 응답에서 보완 시도 (없으면 ID로 표시).
         """
+        store_id = self._extract_store_id(self.product_url)
+        name  = f'상품 {self.product_id}'
+        price = '가격 정보 없음'
+        opts: list = []
+
+        # 리뷰 API에서 상품 메타 추출 시도 (HTML보다 차단 적음)
         try:
-            resp = self.session.get(self.product_url, timeout=12)
-            resp.raise_for_status()
-        except Exception as e:
-            raise CrawlError(f"상품 페이지 요청 실패: {e}")
-
-        soup = BeautifulSoup(resp.text, 'html.parser')
-
-        def first(selectors):
-            for sel in selectors:
-                tag = soup.select_one(sel)
-                if tag and tag.text.strip():
-                    return tag.text.strip()
-            return None
-
-        def multi(selectors):
-            for sel in selectors:
-                tags = soup.select(sel)
-                if tags:
-                    return [t.text.strip() for t in tags if t.text.strip()]
-            return []
-
-        name = first(['h3._22kNQuEXmb', 'h3[class*="Product_title"]',
-                       '[class*="productTitle"]', 'h1'])
-        price = first(['span.bd_2tcyy', 'span[class*="price"]',
-                        'strong[class*="price"]'])
-        opts  = multi(['button._3S2pRql9KW', 'button[class*="option"]',
-                        'li[class*="option"]'])
-
-        # 상품명이 없으면 셀렉터가 깨진 것 — 사용자에게 알림
-        if not name:
-            raise CrawlError(
-                "상품명을 찾지 못했습니다. 네이버 HTML 구조가 변경됐을 수 있습니다.\n"
-                "URL이 실제 상품 페이지인지 확인하거나, 잠시 후 다시 시도해주세요."
+            meta_url = (
+                f"https://smartstore.naver.com/i/v1/reviews/products"
+                f"/{self.product_id}?page=1&pageSize=1&sort=REVIEW_RANKING"
             )
+            resp = self.session.get(meta_url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                pname = (
+                    data.get('productName')
+                    or (data.get('product') or {}).get('name')
+                    or data.get('channelProductName')
+                )
+                if pname:
+                    name = pname
+                for r in data.get('reviews', []):
+                    opt = (r.get('productOptionContent') or '').strip()
+                    if opt and opt not in opts:
+                        opts.append(opt)
+        except Exception:
+            pass  # 메타 실패해도 리뷰 수집은 진행
 
         self.product_info = {
-            'name':    name,
-            'price':   price or '가격 정보 없음',
-            'options': opts,
-            'url':     self.product_url,
+            'name':     name,
+            'price':    price,
+            'options':  opts,
+            'store_id': store_id,
+            'url':      self.product_url,
         }
         return self.product_info
 
