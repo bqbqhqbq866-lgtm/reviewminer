@@ -395,9 +395,11 @@ if run_btn:
         st.error(f"예기치 않은 오류: {e}")
         st.stop()
 
+    # ★ rerun 없이 즉시 렌더 — rerun은 session_state 초기화 위험 있음
     prog_bar.empty()
     status_txt.empty()
-    st.rerun()   # ← 저장 후 즉시 리런 → render_results 가 깔끔하게 그려짐
+    render_results(st.session_state.result)
+    st.stop()   # 아래 중복 렌더 방지
 
 
 # ──────────────────────────────────────────────────────────
