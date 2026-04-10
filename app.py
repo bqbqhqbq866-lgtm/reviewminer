@@ -1,12 +1,13 @@
 """
-ReviewMiner — Streamlit 웹앱 v4.1
+ReviewMiner — Streamlit 웹앱 v4.2
 수정 사항:
-  1. [치명적 버그 수정] result_cache.json → 세션별 고유 파일명
-     (Streamlit Cloud 환경에서 사용자간 데이터 오염 방지)
-  2. [버그 수정] st.slider value=0.5 → 1.5 (min_value=1.0 범위 오류 수정)
+  1. [치명적 버그 수정] run_btn 블록 내 render_results() 제거 → st.rerun()으로 교체
+     (버튼이 False가 되는 다음 rerun에서 elif 분기로 안정적 렌더링)
+  2. [버그 수정] 캐시 복원 시 reviews 등 모든 list 필드 타입 검증 추가
+  3. [개선] 예외 발생 시 로그 출력 추가 (조용한 실패 방지)
 """
 
-import json, io, os, uuid, glob
+import json, io, os, uuid, glob, traceback
 import streamlit as st
 import pandas as pd
 from analyzer import NaverReviewAnalyzer, CrawlError
@@ -41,7 +42,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── session_state 초기화 ─────────────────────────────────
-# [수정 1] 세션별 고유 ID 생성 → 캐시 파일명에 사용
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 
@@ -56,16 +56,38 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── 파일 캐시 복원 (앱 재시작돼도 결과 유지) ──────────────
+# ── 파일 캐시 복원 ──────────────────────────────────────
+# [수정 2] reviews 포함 모든 list 필드 타입 검증 추가
 if st.session_state.result is None and os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, encoding="utf-8") as f:
             cached = json.load(f)
-        cached["option_share"] = pd.DataFrame(cached.get("option_share", []))
-        cached["keywords"]     = pd.DataFrame(cached.get("keywords", []))
+
+        # DataFrame 필드 복원
+        cached["option_share"] = pd.DataFrame(cached.get("option_share") or [])
+        cached["keywords"]     = pd.DataFrame(cached.get("keywords") or [])
+
+        # list 필드 타입 보장 (JSON 파싱 후 None 방어)
+        for list_field in ("reviews", "friction"):
+            val = cached.get(list_field)
+            if not isinstance(val, list):
+                cached[list_field] = []
+
+        # phrases 내부 list 필드 보장
+        phrases = cached.get("phrases") or {}
+        for pf in ("positive_phrases", "negative_phrases", "top_words", "top_bigrams", "top_trigrams"):
+            if not isinstance(phrases.get(pf), list):
+                phrases[pf] = []
+        cached["phrases"] = phrases
+
+        # rating_dist 키를 int로 복원 (JSON은 key가 string)
+        raw_dist = cached.get("rating_dist") or {}
+        cached["rating_dist"] = {int(k): v for k, v in raw_dist.items()}
+
         st.session_state.result = cached
     except Exception:
-        pass
+        # [수정 3] 조용한 실패 방지 — 로그 출력
+        st.session_state._cache_restore_error = traceback.format_exc()
 
 # ── 헬퍼 ────────────────────────────────────────────────
 def save_cache(result: dict):
@@ -209,6 +231,12 @@ st.markdown("""
   <p>네이버 스마트스토어 리뷰 자동 분析 · 실제 표현 추출 · 마찰 포인트 파악</p>
 </div>""", unsafe_allow_html=True)
 
+# ── 캐시 복원 오류 표시 (있을 경우) ─────────────────────
+if hasattr(st.session_state, "_cache_restore_error"):
+    with st.expander("⚠️ 캐시 복원 오류 (이전 결과 로드 실패)", expanded=False):
+        st.code(st.session_state._cache_restore_error, language="python")
+    del st.session_state._cache_restore_error
+
 # ── 사이드바 ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ 분析 설정")
@@ -219,13 +247,12 @@ with st.sidebar:
         options=["도움순(REVIEW_RANKING)","최신순(RECENT)","낮은평점순(LOW_SCORE)"], key="sort_multi")
     SORT_MAP = {"도움순(REVIEW_RANKING)":"REVIEW_RANKING","최신순(RECENT)":"RECENT","낮은평점순(LOW_SCORE)":"LOW_SCORE"}
     selected_sorts = [SORT_MAP[s] for s in sort_multi] if sort_multi else ["REVIEW_RANKING"]
-    # [수정 2] value 0.5 → 1.5 (min_value=1.0 범위 오류 수정)
     delay_base  = st.slider("요청 딜레이 (초)", 1.0, 5.0, 1.5, key="delay_base",
         help="1.5초 이상 권장")
     cookie      = st.text_area("네이버 쿠키 (선택)", placeholder="NID_AUT=...; NID_SES=...;",
         height=80, key="cookie")
     st.markdown("---")
-    run_btn   = st.button("▶ 분析 시작", type="primary", use_container_width=True)
+    run_btn   = st.button("▶ 分析 시작", type="primary", use_container_width=True)
     clear_btn = st.button("🗑 결과 초기화", use_container_width=True)
     st.markdown('<div class="info-note">⚠ 네이버 비공개 API — 정책 변경 시 중단될 수 있습니다.</div>', unsafe_allow_html=True)
 
@@ -235,7 +262,6 @@ if clear_btn:
         "sort_multi":["도움순(REVIEW_RANKING)","최신순(RECENT)","낮은평점순(LOW_SCORE)"],
         "delay_base":1.5,"cookie":""}.items():
         st.session_state[k] = v
-    # [수정 1] 본인 세션 캐시만 삭제 + 오래된 캐시 정리
     if os.path.exists(CACHE_FILE):
         os.remove(CACHE_FILE)
     for old_f in glob.glob("result_cache_*.json"):
@@ -254,9 +280,9 @@ if run_btn:
     st.session_state.result    = None
     st.session_state.log_lines = []
 
-    status_txt   = st.empty()
-    prog_bar     = st.progress(0.0)
-    log_box      = st.expander("📋 수집 로그 (상세)", expanded=False)
+    status_txt = st.empty()
+    prog_bar   = st.progress(0.0)
+    log_box    = st.expander("📋 수집 로그 (상세)", expanded=False)
     log_lines: list = []
 
     def progress_cb(msg: str, pct):
@@ -277,10 +303,12 @@ if run_btn:
             progress_cb=progress_cb,
         )
         st.session_state.result = result
-        save_cache(result)          # ★ 세션별 파일 저장
+        save_cache(result)
         prog_bar.empty()
         status_txt.empty()
-        render_results(result)      # ★ 즉시 렌더
+        # [수정 1] render_results() 직접 호출 제거 → st.rerun()으로 elif 분기에서 안정 렌더링
+        # run_btn=True 상태에서 렌더하면 다음 위젯 조작 시 run_btn=False → 결과 사라짐
+        st.rerun()
 
     except CrawlError as e:
         prog_bar.empty(); status_txt.empty()
@@ -291,6 +319,8 @@ if run_btn:
     except Exception as e:
         prog_bar.empty(); status_txt.empty()
         st.error(f"예기치 않은 오류: {e}")
+        with st.expander("상세 traceback"):
+            st.code(traceback.format_exc(), language="python")
 
 # ── 결과 표시 (session_state 또는 파일 캐시에서) ───────────
 elif st.session_state.result is not None:
