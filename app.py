@@ -1,15 +1,15 @@
 """
-ReviewMiner — Streamlit 웹앱 v4
-핵심 변경: 결과를 session_state + 로컬 파일(result_cache.json) 동시 저장
-→ UI 재실행·탭 클릭·스크롤 어떤 상황에도 결과 유지
+ReviewMiner — Streamlit 웹앱 v4.1
+수정 사항:
+  1. [치명적 버그 수정] result_cache.json → 세션별 고유 파일명
+     (Streamlit Cloud 환경에서 사용자간 데이터 오염 방지)
+  2. [버그 수정] st.slider value=0.5 → 1.5 (min_value=1.0 범위 오류 수정)
 """
 
-import json, io, os
+import json, io, os, uuid, glob
 import streamlit as st
 import pandas as pd
 from analyzer import NaverReviewAnalyzer, CrawlError
-
-CACHE_FILE = "result_cache.json"
 
 st.set_page_config(
     page_title="ReviewMiner · 네이버 리뷰 분析기",
@@ -41,6 +41,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── session_state 초기화 ─────────────────────────────────
+# [수정 1] 세션별 고유 ID 생성 → 캐시 파일명에 사용
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+
+CACHE_FILE = f"result_cache_{st.session_state.session_id}.json"
+
 for k, v in {
     "result": None, "log_lines": [],
     "product_url": "", "max_reviews": 300,
@@ -55,7 +61,6 @@ if st.session_state.result is None and os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, encoding="utf-8") as f:
             cached = json.load(f)
-        # DataFrame 복원
         cached["option_share"] = pd.DataFrame(cached.get("option_share", []))
         cached["keywords"]     = pd.DataFrame(cached.get("keywords", []))
         st.session_state.result = cached
@@ -214,7 +219,8 @@ with st.sidebar:
         options=["도움순(REVIEW_RANKING)","최신순(RECENT)","낮은평점순(LOW_SCORE)"], key="sort_multi")
     SORT_MAP = {"도움순(REVIEW_RANKING)":"REVIEW_RANKING","최신순(RECENT)":"RECENT","낮은평점순(LOW_SCORE)":"LOW_SCORE"}
     selected_sorts = [SORT_MAP[s] for s in sort_multi] if sort_multi else ["REVIEW_RANKING"]
-    delay_base  = st.slider("요청 딜레이 (초)", 1.0, 5.0, 0.5, key="delay_base",
+    # [수정 2] value 0.5 → 1.5 (min_value=1.0 범위 오류 수정)
+    delay_base  = st.slider("요청 딜레이 (초)", 1.0, 5.0, 1.5, key="delay_base",
         help="1.5초 이상 권장")
     cookie      = st.text_area("네이버 쿠키 (선택)", placeholder="NID_AUT=...; NID_SES=...;",
         height=80, key="cookie")
@@ -229,8 +235,14 @@ if clear_btn:
         "sort_multi":["도움순(REVIEW_RANKING)","최신순(RECENT)","낮은평점순(LOW_SCORE)"],
         "delay_base":1.5,"cookie":""}.items():
         st.session_state[k] = v
+    # [수정 1] 본인 세션 캐시만 삭제 + 오래된 캐시 정리
     if os.path.exists(CACHE_FILE):
         os.remove(CACHE_FILE)
+    for old_f in glob.glob("result_cache_*.json"):
+        try:
+            os.remove(old_f)
+        except Exception:
+            pass
     st.rerun()
 
 # ── 분析 실행 ─────────────────────────────────────────────
@@ -265,7 +277,7 @@ if run_btn:
             progress_cb=progress_cb,
         )
         st.session_state.result = result
-        save_cache(result)          # ★ 파일 저장
+        save_cache(result)          # ★ 세션별 파일 저장
         prog_bar.empty()
         status_txt.empty()
         render_results(result)      # ★ 즉시 렌더
